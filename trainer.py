@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SQL Trainer - oefen SQL in je terminal. Geen internet, geen AI, geen afleiding.
+"""SQL Trainer - oefen PostgreSQL in je terminal. Geen AI, geen afleiding.
 
 Start:  python3 trainer.py
 """
@@ -15,11 +15,10 @@ try:
 except ImportError:
     pass
 
-import build_dbs
+import pg
 from exercises import E, LESSONS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DBDIR = os.path.join(HERE, "db")
 PROGRESS = os.path.join(HERE, "progress.json")
 SHOW_SOLUTION_AFTER = 3  # pogingen voordat je de uitwerking mag zien
 
@@ -56,65 +55,20 @@ def key(i):
 
 
 # ---------------------------------------------------------------- database
-def fresh_conn(dbname):
-    mem = sqlite3.connect(":memory:")
-    if dbname != "leeg":
-        src = sqlite3.connect(os.path.join(DBDIR, dbname + ".db"))
-        src.backup(mem)
-        src.close()
-    mem.execute("PRAGMA foreign_keys = ON")
-    return mem
-
-
-def split_statements(sql):
-    out, buf = [], ""
-    for ch in sql:
-        buf += ch
-        if ch == ";" and sqlite3.complete_statement(buf):
-            if buf.strip(" ;\n\t"):
-                out.append(buf.strip())
-            buf = ""
-    if buf.strip():
-        out.append(buf.strip())
-    return out
-
-
-def run_all(conn, sql):
-    """Voert statements uit; geeft (kolommen, rijen) van het laatste resultaat met rijen."""
-    cols, rows = None, None
-    for st in split_statements(sql):
-        cur = conn.execute(st)
-        if cur.description:
-            cols = [d[0] for d in cur.description]
-            rows = cur.fetchall()
-    conn.commit()
-    return cols, rows
-
-
 def lesson_db(ex):
-    return next(l["db"] for l in LESSONS if l["id"] == ex["lesson"])
+    return ex.get("db") or next(l["db"] for l in LESSONS if l["id"] == ex["lesson"])
 
 
 def execute(ex, sql):
-    conn = fresh_conn(lesson_db(ex))
-    try:
-        if ex.get("setup"):
-            conn.executescript(ex["setup"])
-        cols, rows = run_all(conn, sql)
-        if ex.get("check"):
-            cur = conn.execute(ex["check"])
-            cols, rows = [d[0] for d in cur.description], cur.fetchall()
-        return cols, rows
-    finally:
-        conn.close()
+    return pg.run(lesson_db(ex), ex.get("setup"), sql, ex.get("check"))
 
 
 def norm(v):
-    if isinstance(v, float):
-        return round(v, 2)
-    if isinstance(v, str):
-        return v.rstrip()
-    return v
+    v = v.rstrip()
+    try:
+        return round(float(v), 2)
+    except ValueError:
+        return v
 
 
 def is_ordered(sql):
@@ -125,7 +79,9 @@ def is_ordered(sql):
 def compare(ex, mine, good):
     mc, mr = mine
     gc, gr = good
-    if mr is None:
+    if mr is None or gr is None:
+        if mr is None and gr is None:
+            return True, ""
         return False, "Je query gaf geen resultaat-tabel terug. Begin je met SELECT?"
     if len(mc) != len(gc):
         return False, f"Aantal kolommen klopt niet: jij {len(mc)}, verwacht {len(gc)}."
@@ -153,7 +109,7 @@ def show_table(cols, rows, limit=15):
     if cols is None:
         print(dim("(geen resultaat-tabel)"))
         return
-    data = [[("NULL" if v is None else str(v)) for v in r] for r in rows[:limit]]
+    data = [[str(v) for v in r] for r in rows[:limit]]
     w = [min(30, max([len(c)] + [len(r[i]) for r in data])) for i, c in enumerate(cols)]
     line = lambda vals: " | ".join(v[:30].ljust(w[i]) for i, v in enumerate(vals))
     print(bold(line(cols)))
@@ -164,27 +120,33 @@ def show_table(cols, rows, limit=15):
     print(dim(f"({len(rows)} rijen{more})"))
 
 
-def show_schema(dbname, table=None):
-    if dbname == "leeg":
-        print(dim("Deze les begint met een lege database (of met de tabellen uit de opdracht)."))
+def show_schema(dbname, setup=None, table=None):
+    q = """SELECT c.table_name, c.column_name, c.data_type,
+       EXISTS (SELECT 1 FROM information_schema.key_column_usage k JOIN information_schema.table_constraints t
+               ON k.constraint_name = t.constraint_name WHERE t.constraint_type = 'PRIMARY KEY'
+               AND k.table_name = c.table_name AND k.column_name = c.column_name) AS pk
+  FROM information_schema.columns c WHERE c.table_schema IN ('public') OR c.table_schema LIKE 'pg_temp%'
+ ORDER BY c.table_name, c.ordinal_position"""
+    try:
+        cols, rows = pg.run(dbname, setup, q)
+    except pg.PgError as err:
+        print(red(str(err)))
         return
-    conn = fresh_conn(dbname)
-    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-    for t in tables:
+    if not rows:
+        print(dim("Deze database is (nog) leeg."))
+        return
+    cur = None
+    for t, c, typ, pk in rows:
         if table and t != table:
             continue
-        cols = conn.execute(f"PRAGMA table_info({t})").fetchall()
-        fks = {r[3]: f"{r[2]}.{r[4]}" for r in conn.execute(f"PRAGMA foreign_key_list({t})")}
-        parts = []
-        for c in cols:
-            s = c[1]
-            if c[5]:
-                s = bold(s) + yellow("(PK)")
-            if c[1] in fks:
-                s += dim("->" + fks[c[1]])
-            parts.append(s)
-        print(f"{bold(t)}: " + ", ".join(parts))
-    conn.close()
+        if t != cur:
+            print()
+            print(bold(t) + ": ", end="")
+            cur = t
+            first = True
+        print(("" if first else ", ") + (bold(c) + yellow("(PK)") if pk == "t" else c) + dim(" " + typ), end="")
+        first = False
+    print()
 
 
 # ---------------------------------------------------------------- invoer
@@ -253,6 +215,12 @@ def run_lesson(lesson, prog, start=0):
         print()
         print(bold(("✔ " if done else "") + ex["q"]))
         print()
+        if ex.get("choices"):
+            r = multiple_choice(ex, idx, prog)
+            if r == "menu":
+                return
+            pos += -1 if r == "prev" else 1
+            continue
         while True:
             cmd = read_sql(Timer.status() + "sql> ")
             c = cmd.lower().split()
@@ -280,7 +248,7 @@ def run_lesson(lesson, prog, start=0):
                 print(lesson["uitleg"])
                 continue
             if c and c[0] == ":schema":
-                show_schema(lesson_db(ex), c[1] if len(c) > 1 else None)
+                show_schema(lesson_db(ex), ex.get("setup"), c[1] if len(c) > 1 else None)
                 continue
             if c and c[0] == ":timer":
                 m = int(c[1]) if len(c) > 1 and c[1].isdigit() else 25
@@ -305,7 +273,7 @@ def run_lesson(lesson, prog, start=0):
             # --- SQL nakijken
             try:
                 mine = execute(ex, cmd)
-            except sqlite3.Error as err:
+            except pg.PgError as err:
                 prog["attempts"][key(idx)] = prog["attempts"].get(key(idx), 0) + 1
                 save_progress(prog)
                 print(red(f"SQL-fout: {err}"))
@@ -333,27 +301,65 @@ def run_lesson(lesson, prog, start=0):
         input()
 
 
+def multiple_choice(ex, idx, prog):
+    letters = "abcd"
+    for l, o in zip(letters, ex["choices"]):
+        print(f"  {l}) {o}")
+    print()
+    while True:
+        try:
+            a = input(Timer.status() + "antwoord (a-d, :n, :v, :menu)> ").strip().lower()
+        except EOFError:
+            return "menu"
+        if a in (":menu", ":quit", ":q"):
+            if a != ":menu":
+                save_progress(prog)
+                sys.exit(0)
+            return "menu"
+        if a in (":n", ":skip"):
+            return "next"
+        if a == ":v":
+            return "prev"
+        if a not in letters[:len(ex["choices"])] or not a:
+            print(red("Typ a, b, c of d."))
+            continue
+        if a == ex["sol"]:
+            if key(idx) not in prog["done"]:
+                prog["done"].append(key(idx))
+            save_progress(prog)
+            print(green("✔ Goed! ") + (ex.get("uitleg") or ""))
+            input(dim("Enter = volgende"))
+            return "next"
+        prog["attempts"][key(idx)] = prog["attempts"].get(key(idx), 0) + 1
+        save_progress(prog)
+        print(red("✘ Fout, probeer opnieuw."))
+
+
 def sandbox(ex):
-    conn = fresh_conn(lesson_db(ex))
-    if ex.get("setup"):
-        conn.executescript(ex["setup"])
+    db = lesson_db(ex)
+    done = [ex.get("setup") or ""]
     print(yellow("Vrij uitproberen. Niets wordt nagekeken. :back om terug te gaan."))
     while True:
         cmd = read_sql("try> ")
         if cmd.startswith(":"):
             if cmd.startswith(":schema"):
-                show_schema(lesson_db(ex))
+                show_schema(db, "\n".join(done))
                 continue
             break
         try:
-            show_table(*run_all(conn, cmd))
-        except sqlite3.Error as err:
+            show_table(*pg.run(db, "\n".join(done), cmd))
+            done.append(cmd)  # bewaar zodat CREATE/INSERT blijven bestaan in deze sessie
+        except pg.PgError as err:
             print(red(f"SQL-fout: {err}"))
-    conn.close()
 
 
 def menu():
-    build_dbs.ensure(DBDIR)
+    try:
+        pg.setup()
+    except pg.PgError as err:
+        print(red("PostgreSQL is niet bereikbaar:\n" + str(err)))
+        print("Zorg dat docker draait (sudo systemctl start docker) of zet PGHOST/PGPORT/PGUSER/PGPASSWORD.")
+        return
     prog = load_progress()
     while True:
         clear()

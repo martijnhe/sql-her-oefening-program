@@ -65,7 +65,7 @@ CREATE TABLE patient_bed (patient_nr CHAR(6) REFERENCES patient(nummer), bed_nr 
   intake_datum DATE NOT NULL, uitschrijf_datum DATE, lst_bijwerkdat DATE,
   PRIMARY KEY (patient_nr, bed_nr, intake_datum));
 CREATE TABLE brmo (nummer CHAR(3) PRIMARY KEY, naam TEXT);
-CREATE TABLE patient_melding_brmo (brmo_melding CHAR(5) PRIMARY KEY, patient_nr CHAR(5) REFERENCES patient(nummer),
+CREATE TABLE patient_melding_brmo (brmo_melding CHAR(5) PRIMARY KEY, patient_nr CHAR(6) REFERENCES patient(nummer),
   brmo_nr CHAR(3) REFERENCES brmo(nummer), melding_datum DATE, afd_behandeld TEXT, maatregel TEXT);
 CREATE TABLE patient_notitie (patient_nr CHAR(6) REFERENCES patient(nummer), notitie_datum DATE NOT NULL,
   commentaar VARCHAR(4000), lst_bijwerkdat DATE, PRIMARY KEY (patient_nr, notitie_datum));
