@@ -178,13 +178,15 @@ def read_sql(prompt):
     lines = []
     while True:
         try:
-            line = input(prompt if not lines else "  ...> ")
+            line = input(prompt if not lines else dim("  ...> (vergeten ; ? druk Enter) "))
         except EOFError:
             return ":quit"
         if not lines and line.strip().startswith(":"):
             return line.strip()
         if not lines and not line.strip():
             continue
+        if lines and not line.strip():  # lege regel = versturen (vergeten ; mag)
+            return "\n".join(lines) + ";"
         lines.append(line)
         if line.rstrip().endswith(";"):
             return "\n".join(lines)
