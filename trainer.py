@@ -16,6 +16,7 @@ except ImportError:
     pass
 
 import pg
+from diagrams import DIAGRAMS
 from exercises import E, LESSONS
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -120,6 +121,28 @@ def show_table(cols, rows, limit=15):
     print(dim(f"({len(rows)} rijen{more})"))
 
 
+_TABLES = {}
+
+
+def table_names(dbname, setup):
+    k = (dbname, setup)
+    if k not in _TABLES:
+        try:
+            _, rows = pg.run(dbname, setup, "SELECT string_agg(table_name, ', ' ORDER BY table_name) FROM information_schema.tables "
+                                            "WHERE table_schema = 'public';")
+            _TABLES[k] = rows[0][0] if rows and rows[0][0] else "(nog geen - jij maakt ze)"
+        except pg.PgError:
+            _TABLES[k] = "?"
+    return _TABLES[k]
+
+
+def show_diagram(dbname, setup=None):
+    if dbname in DIAGRAMS:
+        print(DIAGRAMS[dbname])
+    else:
+        show_schema(dbname, setup)
+
+
 def show_schema(dbname, setup=None, table=None):
     q = """SELECT c.table_name, c.column_name, c.data_type,
        EXISTS (SELECT 1 FROM information_schema.key_column_usage k JOIN information_schema.table_constraints t
@@ -170,7 +193,8 @@ def read_sql(prompt):
 HELP = """\
 Typ je SQL en eindig met ;  (meerdere regels mag)
   :hint          tip voor deze opgave
-  :schema [tab]  tabellen en kolommen van de database
+  :db            plaatje van de database (welke tabellen, hoe ze gekoppeld zijn)
+  :schema [tab]  alle kolommen met hun type
   :try           vrij uitproberen (wordt niet nagekeken), :back om terug te gaan
   :uitleg        de uitleg van deze les opnieuw
   :oplossing     uitwerking (pas na %d foute pogingen)
@@ -204,7 +228,13 @@ def run_lesson(lesson, prog, start=0):
     clear()
     print(bold(lesson["title"]) + "\n")
     print(lesson["uitleg"])
-    print("\n" + dim("Typ :help voor commando's. Druk Enter om te beginnen."))
+    print("\n" + dim("Druk Enter om het plaatje van de database te zien."))
+    input()
+    if lesson["db"] in DIAGRAMS:
+        clear()
+        show_diagram(lesson["db"])
+        print(dim("Dit plaatje zie je altijd weer met :db   (kolommen + types: :schema)"))
+    print(dim("Typ :help voor commando's. Druk Enter om te beginnen."))
     input()
     while 0 <= pos < len(items):
         idx = items[pos]
@@ -214,6 +244,8 @@ def run_lesson(lesson, prog, start=0):
         print(dim(f"{lesson['title']}  -  opgave {pos + 1}/{len(items)}  -  database: {lesson['db']}") + Timer.status())
         print()
         print(bold(("✔ " if done else "") + ex["q"]))
+        if not ex.get("choices"):
+            print(dim("Tabellen: " + table_names(lesson_db(ex), ex.get("setup")) + "    (:db = plaatje)"))
         print()
         if ex.get("choices"):
             r = multiple_choice(ex, idx, prog)
@@ -246,6 +278,9 @@ def run_lesson(lesson, prog, start=0):
                 continue
             if c and c[0] == ":uitleg":
                 print(lesson["uitleg"])
+                continue
+            if c and c[0] == ":db":
+                show_diagram(lesson_db(ex), ex.get("setup"))
                 continue
             if c and c[0] == ":schema":
                 show_schema(lesson_db(ex), ex.get("setup"), c[1] if len(c) > 1 else None)
