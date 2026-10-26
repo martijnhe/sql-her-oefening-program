@@ -178,7 +178,7 @@ def read_sql(prompt):
     lines = []
     while True:
         try:
-            line = input(prompt if not lines else dim("  ...> (Enter = versturen, :r = opnieuw) "))
+            line = input(prompt if not lines else dim("  ...> (Enter = versturen, :b = regel terug, :r = opnieuw) "))
         except EOFError:
             return ":quit"
         except KeyboardInterrupt:  # Ctrl+C = query wissen, niet stoppen
@@ -188,6 +188,12 @@ def read_sql(prompt):
         if line.strip().lower() in (":r", ":reset", ":wis"):
             print(yellow("Query gewist. Begin opnieuw."))
             lines = []
+            continue
+        if lines and line.strip().lower() in (":b", ":terug"):
+            lines.pop()
+            print(yellow("Laatste regel verwijderd. Je query is nu:") if lines else yellow("Query is leeg."))
+            for l in lines:
+                print("     " + l)
             continue
         if not lines and line.strip().startswith(":"):
             return line.strip()
@@ -203,6 +209,7 @@ def read_sql(prompt):
 HELP = """\
 Typ je SQL en eindig met ;  (meerdere regels mag)
   :r  of Ctrl+C  query wissen en opnieuw beginnen
+  :b             vorige regel van je query weghalen (Backspace werkt binnen de regel)
   :hint          tip voor deze opgave
   :db            plaatje van de database (welke tabellen, hoe ze gekoppeld zijn)
   :schema [tab]  alle kolommen met hun type
