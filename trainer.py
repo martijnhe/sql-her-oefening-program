@@ -178,9 +178,17 @@ def read_sql(prompt):
     lines = []
     while True:
         try:
-            line = input(prompt if not lines else dim("  ...> (vergeten ; ? druk Enter) "))
+            line = input(prompt if not lines else dim("  ...> (Enter = versturen, :r = opnieuw) "))
         except EOFError:
             return ":quit"
+        except KeyboardInterrupt:  # Ctrl+C = query wissen, niet stoppen
+            print(yellow("\nQuery gewist. Begin opnieuw."))
+            lines = []
+            continue
+        if line.strip().lower() in (":r", ":reset", ":wis"):
+            print(yellow("Query gewist. Begin opnieuw."))
+            lines = []
+            continue
         if not lines and line.strip().startswith(":"):
             return line.strip()
         if not lines and not line.strip():
@@ -194,6 +202,7 @@ def read_sql(prompt):
 
 HELP = """\
 Typ je SQL en eindig met ;  (meerdere regels mag)
+  :r  of Ctrl+C  query wissen en opnieuw beginnen
   :hint          tip voor deze opgave
   :db            plaatje van de database (welke tabellen, hoe ze gekoppeld zijn)
   :schema [tab]  alle kolommen met hun type
